@@ -18,6 +18,9 @@ module.exports.routes = {
         ['/get-ingredients', UserCtrl.getIngredients],
         ['/get-transactionhdr', UserCtrl.getTransactionHdr],
         ['/get-transactiondtl', UserCtrl.getTransactionDtl],
+        ['/get-product-summary', UserCtrl.productSummary],
+        ['/get-mostPopular', UserCtrl.getPopular],
+        ['/get-salespday', UserCtrl.getSalesPerDay],
     ],
     remove: [
         ['/delete-product', UserCtrl.deleteProduct],

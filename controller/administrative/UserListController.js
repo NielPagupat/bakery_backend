@@ -1,7 +1,7 @@
 const { select, insert, update, remove } = require("../../models/mainModel");
 const path = require('path');
 const bcrypt = require('bcrypt');
-const { GetLogs, GetProducts, GetTransactionHdr, GetTransactionDtl, GetIngredients } = require("../../models/rawQueryModel/rawQueryModel");
+const { GetLogs, GetProducts, GetTransactionHdr, GetTransactionDtl, GetIngredients, SetTransDtl, GetSoldItemsTotal, GetSales, GetSalesDtl, GetSalesPerDay, GetPopular } = require("../../models/rawQueryModel/rawQueryModel");
 const db = require('../../config/dbConnection');
 const AuthModel = require('../../models/auth/authModel');
 const fs = require('fs');
@@ -182,6 +182,45 @@ module.exports.getTransactionDtl = async function (req, res) {
 	}
 }
 
+module.exports.productSummary = async function (req, res) {
+	data = req.query
+	try {
+		var result = GetSoldItemsTotal();
+		result.then(function(response){
+			res.status(200).json(response);
+		})
+	} catch (error) {
+		res.status(400).send({ error: 'Server Error' });
+		console.error(error)
+	}
+}
+
+module.exports.getSalesPerDay = async function (req, res) {
+	data = req.query
+	try {
+		var result = GetSalesPerDay();
+		result.then(function(response){
+			res.status(200).json(response);
+		})
+	} catch (error) {
+		res.status(400).send({ error: 'Server Error' });
+		console.error(error)
+	}
+}
+
+module.exports.getPopular = async function (req, res) {
+	data = req.query
+	try {
+		var result = GetPopular();
+		result.then(function(response){
+			res.status(200).json(response);
+		})
+	} catch (error) {
+		res.status(400).send({ error: 'Server Error' });
+		console.error(error)
+	}
+}
+
 module.exports.saveProduct = async function (req, res) {
     const data = req.body.dataVariable;
 
@@ -191,9 +230,9 @@ module.exports.saveProduct = async function (req, res) {
             id: data.id,
             pname: data.pname,
             pprice: data.pprice,
-            pstock: data.pstock,
+            stock: data.stock,
             ptype: data.ptype,
-            pexpiry: data.expiry,
+            pexpiry: data.pexpiry,
             picturepath: data.picturepath
         }
     };
@@ -269,47 +308,70 @@ module.exports.saveIngredient = async function (req, res) {
 };
 
 module.exports.saveTransaction = async function (req, res) {
-    const datahdr = req.body.dataVariable.hdr;
-    const datadtl = req.body.dataVariable.dtl;
+    const { hdr, dtl } = req.body.dataVariable;
+
+    if (!hdr || !dtl || !Array.isArray(dtl) || dtl.length === 0) {
+        return res.status(400).json({ error: 'Invalid or incomplete transaction data.' });
+    }
 
     const paramshdr = {
         tableName: "tbltransactionhdr",
         fieldValue: {
-            transactiontotal: datahdr.transactiontotal,
-            transactiontype: datahdr.transactiontype,
+            transactiontotal: hdr.transactiontotal,
+            transactiontype: hdr.transactiontype,
         }
     };
 
     try {
         const hdrResult = await insert(paramshdr);
 
-        if (!hdrResult.transactionID) {
-            throw new Error("Transaction header insertion failed");
+        if (!hdrResult || !hdrResult.id) {
+            return res.status(500).json({ error: "Transaction header insertion failed" });
         }
 
-        const transactionID = hdrResult.transactionID;
+        const id = hdrResult.id;
 
-        // Insert each transaction detail
-        for (const element of datadtl) {
+        for (const item of dtl) {
+            // Insert transaction detail
             const paramsdtl = {
-                tableName: "tbltransactiondtl",
-                fieldValue: {
-                    transaction_link_id: transactionID,
-                    prodid: element.prodid,
-                    prodprice: element.prodprice,
-                    quantity: element.quantity,
-                }
+                transaction_link_id: id,
+                prodid: item.product.id,
+                prodprice: item.product.pprice,
+                quantity: item.quantity,
             };
 
-            await insert(paramsdtl);
+            await SetTransDtl(paramsdtl);
+
+            // Fetch current product stock
+            const stockQuery = `SELECT stock FROM tblproduct WHERE id = ? LIMIT 1`;
+            const stockResult = await new Promise((resolve, reject) => {
+                db.query(stockQuery, [item.product.id], (err, result) => {
+                    if (err) return reject(err);
+                    resolve(result[0]);
+                });
+            });
+
+            const currentStock = stockResult?.stock ?? 0;
+            const updatedStock = currentStock - item.quantity;
+
+            // Update stock in tblproduct
+            await update({
+                tableName: "tblproduct",
+                fieldValue: {
+                    id: item.product.id,      // required for WHERE condition
+                    stock: updatedStock       // final computed value
+                }
+            });
         }
 
-        res.status(200).json({ success: true, transactionID });
+        return res.status(200).json({ success: true, id });
     } catch (error) {
         console.error("Transaction save error:", error);
-        res.status(500).send({ error: 'Server Error' });
+        return res.status(500).json({ error: 'An unexpected error occurred while saving the transaction.' });
     }
 };
+
+
 
 module.exports.deleteProduct = async function (req, res) {
 	const data = req.query
@@ -329,6 +391,8 @@ module.exports.deleteProduct = async function (req, res) {
 		console.error(error)
 	}
 }
+
+
 
 //template
 module.exports.AuditLog = async function (req, res) {
